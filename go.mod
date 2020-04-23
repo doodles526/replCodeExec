@@ -1,4 +1,4 @@
-module main
+module github.com/doodles526/replCodeExec
 
 go 1.13
 
