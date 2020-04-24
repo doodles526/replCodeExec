@@ -1,6 +1,6 @@
 package execution
 
-type RefID string
+type RefID []byte
 type ElementType int
 const (
   ObjectElementType = iota

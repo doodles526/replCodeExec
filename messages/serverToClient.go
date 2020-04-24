@@ -20,6 +20,12 @@ type TerminalCodeResponse struct {
 	SessionID                   *string           `json:"session_id,omitempty"`
 }
 
+/*
+{
+  text: "{'a': @@MAGIC_STRING_1}"
+  reserved_refs: {'@@MAGIC_STRING_1': '...'}
+}
+*/
 type CodeResponseError struct {
 	Error string `json:"error"`
 }

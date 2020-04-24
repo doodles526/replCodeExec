@@ -21,7 +21,7 @@ func ServeCodeExecution(args *Args) error {
 
   // TODO: Do I want this to be a single-wire API?
   // TODO: Wire eventual execution client into factory
-  r.HandleFunc("/", executionHandlerFactory(args.ExecPool)).Methods("POST")
+  r.HandleFunc("/", executionHandlerFactory(args.Executor)).Methods("POST")
   s := &http.Server {
     Addr: args.ListenAddr,
     Handler: r,
@@ -29,7 +29,7 @@ func ServeCodeExecution(args *Args) error {
   return s.ListenAndServe()
 }
 
-func executionHandlerFactory(execPool execution.ExecutorPool) func(http.ResponseWriter, *http.Request) {
+func executionHandlerFactory(execPool execution.Executor) func(http.ResponseWriter, *http.Request) {
   return func(w http.ResponseWriter, r *http.Request) {
     defer r.Body.Close()
     body, err := ioutil.ReadAll(r.Body)
@@ -69,18 +69,53 @@ func sendError(msg messages.CodeResponseError, code int, w http.ResponseWriter) 
       w.Write(errRData)
 }
 
-func handleCodeProcessRequest(execPool execution.ExecutorPool, w http.ResponseWriter, r *http.Request, msg messages.CodeProcessRequest) {
+func handleCodeProcessRequest(exec execution.Executor, w http.ResponseWriter, r *http.Request, msg messages.CodeProcessRequest) {
   // TODO implement
-  exec, err := execPool.FindOrCreateExecutor(msg.SessionID)
+  execResp, err := exec.RunCodeLine(msg.CodeToProcess)
   if err != nil {
     // TODO
   }
-  execResp, err := exec.Run(msg.CodeToProcess)
+  clientRef := map[string]string {}
+  for ref, _ := range execResp.References {
+    // what to replace references with in display
+    clientRef[string(ref)] = "..."
+  }
+  clientResp := &TerminalCodeResponse{
+    Text: execResp.Representation,
+    ReservedExpansionReferences clientRef,
+    // TODO: Pass in session identifier
+    SessionID: nil,
+  }
+  msg, err := messages.Marshal(clientResp)
   if err != nil {
     // TODO
   }
-  
+  w.Write(msg)
 }
-func handleCodeExpansionRequest(execPool execution.ExecutorPool, w http.ResponseWriter, r *http.Request, msg messages.CodeExpansionRequest) {
+
+func handleCodeExpansionRequest(exec execution.Executor, w http.ResponseWriter, r *http.Request, msg messages.CodeExpansionRequest) {
+  ref, err := exec.GetReference([]byte(msg.Reference))
+  if err != nil {
+    // TODO
+  }
+  clientRef := map[string]string {}
+  for ref, _ := range ref.References {
+    // what to replace references with in display
+    clientRef[string(ref)] = "..."
+  }
+
+  clientResp := &TerminalCodeResponse{
+    Text: execResp.Representation,
+    ReservedExpansionReferences clientRef,
+    // TODO: Pass in session identifier
+    SessionID: nil,
+  }
+
+  msg, err := messages.Marshal(clientResp)
+  if err != nil {
+    // TODO
+  }
+  w.Write(msg)
+
   // TODO implement
 }

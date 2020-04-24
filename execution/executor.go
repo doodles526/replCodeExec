@@ -2,8 +2,11 @@ package execution
 
 import (
   "os/exec"
+  "strconv"
   "bufio"
   "io"
+
+  "github.com/google/uuid"
 )
 
 type ResponseElement struct {
@@ -12,31 +15,22 @@ type ResponseElement struct {
 
   // Reference allows one to point to this element for
   // potential deferred rendering
-  Reference RefType
+  Reference RefID
 
-  // TODO: Brainstorm not using an interface here
-  Payload interface{}
+  // TODO: references by magic string aren't good. Fix that
+  Representation string
+
+  // References holds a mapping of a referenceID to a string of the yet to be parsed data
+  References map[RefID]bool
 }
 
-func (re *ResponseElement) RenderToString(args *ResponseRenderArgs) (string, error) {
-  switch re.Type {
-  case ObjectElementType:
-    return re.renderObject(re.Payload)
-  case NumberElementType:
-  case StringElementType:
-  case ArrayElementType:
-  case KeyValueElementType:
-  default:
-    return "", fmt.Errorf("Unknown element type %s", re.Type)
-  }
-
-}
-
-
+/*
+ExecutorPool
+*/
 
 type InlineExecutor interface {
-  RunCodeLine(string) (ResponseElement, error)
-  GetReference(RefType) (ResponseElement, error)
+  RunCodeLine(string) (*ResponseElement, error)
+  GetReference(RefID) (*ResponseElement, error)
 }
 
 type pythonExecutor struct {
@@ -46,7 +40,9 @@ type pythonExecutor struct {
   stderr io.ReadCloser
 
   stdoutB bufio.Reader
-  stderrB bufio.REader
+  stderrB bufio.Reader
+
+  refState map[RefID]ResponseElement
 }
 
 func NewPythonExecutor() (*pythonExecutor, error){
@@ -69,22 +65,177 @@ func NewPythonExecutor() (*pythonExecutor, error){
     stdin: stdin,
     stdout: stdout,
     stderr: stderr,
-    stdoutB: bufio.NewReader(stdout)
-    stderrB: bufio.NewReader(stderr)
+    stdoutB: bufio.NewReader(stdout),
+    stderrB: bufio.NewReader(stderr),
+    refState: map[RefID]ResponseElement{},
   }
 }
 
+func (p *pythonExecutor) GetReference(ref RefID) (*ResponseElement, error) {
+  resp, ok := p[ref]
+  if !ok {
+    return nil, fmt.ErrorF("Could not find reference %v", ref)
+  }
+  return resp, nil
+}
 // TODO: For python environment, implement python stub script that allows receiving lines over STDIN and responding over STDOUT
 func(p *pythonExecutor) RunCodeLine(line string) (*ResponseElement, error) {
   if _, err := io.WriteString(p.stdin, line); err != nil {
     return nil, err
   }
 
-  // TODO: Likely won't work as we need to encounter EOF - try out
-  interpResp, err := ioutil.ReadAll()
+  interpResp, err := p.stdoutB.ReadLine()
   if err != nil {
     return nil, err
   }
   return p.parse(interpResp)
 } 
 
+// parse should parse returned data. It should return a responseelement
+func (p *pythonExecutor) parse(code string) (*ResponseElement, error) {
+  switch p.topLevelDataType(code) {
+  case StringElementType:
+    p.parseString(code)
+  case ObjectElementType:
+    p.parseObject(code)
+  case NumberElementType:
+    p.parseNumber(code)
+  case ArrayElementType:
+    p.parseArray(code)
+  default:
+    return nil, fmt.Errorf("Unknown data type")
+  }
+  return nil, fmt.Errorf("Should have found recognized type")
+}
+
+func (p *pythonExecutor) parseNumber(code string) (*ResponseElement, error) {
+  // Just validation logic
+  val, err := strconv.Atoi(code)
+  if err != nil {
+    return nil, err
+  }
+  return &ResponseElement {
+    Type: NumberElementType,    
+    Reference: uuid.New(),
+    Representation: code,
+  }, nil
+}
+
+func (p *pythonExecutor) parseString(code string) (*ResponseElement, error) {
+  return &ResponseElement {
+    Type: StringElementType,
+    Reference: uuid.New(),
+    Representation: code,
+  }, nil
+}
+
+func (p *pythonExecutor) parseArray(code string) (*ResponseElement, error) {
+  // TODO: Don't assume proper formatting
+  contents = strings.TrimSpace(code)
+  contents = strings.[1:len(contents)-2]
+  elements = strings.Split(contents, ',')
+
+  refs := map[RefID]bool{}
+
+  finalRep := "["
+  representationElements := []string{}
+  for _, elem := range elements {
+    if p.shouldRefer(elem) {
+      rElem, err := p.parse(elem)
+      if err != nil {
+        return nil, err
+      }
+      // Cache the reference for later expansion
+      p[rElem.Reference] = rElem
+      // have replacement refs in place
+      refs[rElem.Reference] = true
+      representationElements = append(representationElements, string(rElem.Reference))
+
+    } else {
+      representationElements = append(representationElements, elem) 
+    }
+  }
+  finalRep += strings.Join(representationElements, ", ")
+  finalRep += "]"
+  
+  return &ResponseElement{
+    Type: ArrayElementType,
+    Reference: UUID.New(),
+    Representation: finalRep,
+    References: refs,
+  }, nil
+}
+
+// TODO extract code for representation for code dupe with parseArray
+func (p *pythonExecutor) parseObject(code string) (*ResponseElement, error) {
+  contents = strings.TrimSpace(code)
+  contents = strings.[1:len(contents)-2]
+  elements = strings.Split(contents, ',')
+
+  refs := map[RefID]bool{}
+
+  finalRep := "{"
+  representationElements := []string{}
+
+  for _, elem := range elements {
+    keyValPair := strings.Split(elem, ':')    
+    key := keyValPair[0]
+    key = strings.TrimSpace(key)
+    // assume key is primitive type
+
+    val := keyValPair[1]
+    val = strings.TrimSpace(val)
+
+    if p.shouldRefer(val) {
+      rElem, err := p.parse(val)
+      if err != nil {
+        return nil, err
+      }
+      // Cache the reference for later expansion
+      p[rElem.Reference] = rElem
+      // have replacement refs in place
+      refs[rElem.Reference] = true
+      kvPair := key + ":" + string(rElem.Reference)
+      representationElements = append(representationElements, kvPair)
+
+    } else {
+      kvPair := key + ": " + val
+      representationElements = append(representationElements, elem) 
+    }
+  }
+  return &ResponseElement{
+    Type: ObjectElementType,
+    Reference: UUID.New(),
+    Representation: finalRep,
+    References: refs,
+  }, nil
+}
+
+func (p *pythonExecutor) shouldRefer(code string) bool{
+  switch p.topLevelDataType(code) {
+  case StringElementType:
+    return false
+  case ObjectElementType:
+    return true
+  case NumberElementType:
+    return false
+  case ArrayElementType:
+    return true
+  // Don't refer to something if we don't know what it is
+  return false
+}
+
+func (p *pythonExecutor) topLevelDataType(code string) ElementType {
+  firstChar := code[0]
+  switch firstChar {
+  case '\'':
+    return StringElementType
+  case '{':
+    return ObjectElementType
+  case '[':
+    return ArrayElementType
+  default: // for now assume no char prefix means it is a number
+    return NumberElementType
+  }
+
+}
